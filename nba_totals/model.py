@@ -27,11 +27,12 @@ class TeamForm:
 
 
 @dataclass
-class Absence:
+class RosterPlayer:
     name: str
-    status: str
-    ppg: float
+    status: str     # "" = expected to play, else injury status ("Out", "Day-To-Day", ...)
+    ppg: float      # points per game in the games he played (last N team games)
     mpg: float
+    share: float    # part of the last N team games he played
 
 
 def possessions(fga: float, oreb: float, tov: float, fta: float) -> float:
@@ -94,9 +95,22 @@ def expected_points(off: TeamForm, deff: TeamForm, league: LeagueAvg) -> float:
     return off.pts_for * deff.pts_against / league.ppg
 
 
-def injury_penalty(absences: list[Absence], s: Settings = SETTINGS) -> float:
-    probs = dict(s.injury_miss_prob)
-    return sum(a.ppg * probs.get(a.status, 0.0) * s.injury_loss_factor for a in absences)
+def miss_prob(status: str, s: Settings = SETTINGS) -> float:
+    return dict(s.injury_miss_prob).get(status, 0.0)
+
+
+def lineup_delta(roster: list[RosterPlayer], s: Settings = SETTINGS) -> float:
+    """Points to add to a team's form because today's lineup differs from the lineup of the form window.
+
+    The last-N form already contains every player in proportion to the games he played (share).
+    A player who misses today removes ppg*share; a player who plays today but missed part of the
+    window (back from injury) adds ppg*(1-share). Replacements cover part of it -> injury_loss_factor.
+    """
+    total = 0.0
+    for p in roster:
+        q = miss_prob(p.status, s)
+        total += p.ppg * ((1 - q) * (1 - p.share) - q * p.share)
+    return total * s.injury_loss_factor
 
 
 def played_yesterday(games: list[GameRecord], day: date) -> bool:
@@ -117,7 +131,7 @@ def verdict(pred: float, line: float | None, s: Settings = SETTINGS) -> str:
 @dataclass
 class TeamSide:
     games: list[GameRecord]
-    absences: list[Absence]
+    roster: list[RosterPlayer]
 
 
 @dataclass
@@ -126,8 +140,8 @@ class Prediction:
     away_pts: float
     home_b2b: bool
     away_b2b: bool
-    home_inj: float
-    away_inj: float
+    home_lineup: float    # signed lineup adjustment, negative = weaker than in form window
+    away_lineup: float
 
     @property
     def total(self) -> float:
@@ -143,7 +157,7 @@ def predict(home: TeamSide, away: TeamSide, day: date, league: LeagueAvg, s: Set
     a = blend(a_all, team_form(away.games, day, s.last_n_games, home=False), s.home_away_weight)
     hp, ap = expected_points(h, a, league), expected_points(a, h, league)
     h_b2b, a_b2b = played_yesterday(home.games, day), played_yesterday(away.games, day)
-    h_inj, a_inj = injury_penalty(home.absences, s), injury_penalty(away.absences, s)
-    hp -= h_inj + (s.back_to_back_penalty if h_b2b else 0)
-    ap -= a_inj + (s.back_to_back_penalty if a_b2b else 0)
-    return Prediction(hp, ap, h_b2b, a_b2b, h_inj, a_inj)
+    h_lu, a_lu = lineup_delta(home.roster, s), lineup_delta(away.roster, s)
+    hp += h_lu - (s.back_to_back_penalty if h_b2b else 0)
+    ap += a_lu - (s.back_to_back_penalty if a_b2b else 0)
+    return Prediction(hp, ap, h_b2b, a_b2b, h_lu, a_lu)

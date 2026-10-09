@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 
 from nba_totals.config import Settings
-from nba_totals.model import (Absence, GameRecord, LeagueAvg, TeamSide, expected_points, injury_penalty,
+from nba_totals.model import (GameRecord, LeagueAvg, RosterPlayer, TeamSide, expected_points, lineup_delta,
                               possessions, predict, team_form, verdict)
 
 D = date(2025, 1, 31)
@@ -35,11 +35,13 @@ def test_good_offence_vs_bad_defence_scores_more():
     assert expected_points(off, bad_d, lg) > 120
 
 
-def test_injury_penalty_partial():
+def test_lineup_delta():
     s = Settings(injury_loss_factor=0.5)
-    pen = injury_penalty([Absence("A", "Out", 20, 34), Absence("B", "Questionable", 10, 25),
-                          Absence("C", "Day-To-Day", 30, 30)], s)
-    assert pen == 20 * 0.5 + 10 * 0.4 * 0.5
+    # A: always played, out today -> -20.  B: played half, questionable -> 0.6*10*0.5 - 0.4*10*0.5 = +1
+    # C: played every game and plays -> 0.  D: missed the whole window, back today -> +25
+    d = lineup_delta([RosterPlayer("A", "Out", 20, 34, 1.0), RosterPlayer("B", "Questionable", 10, 25, 0.5),
+                      RosterPlayer("C", "", 30, 30, 1.0), RosterPlayer("D", "", 25, 33, 0.0)], s)
+    assert abs(d - (-20 + 1 + 0 + 25) * 0.5) < 1e-9
 
 
 def test_back_to_back_and_verdict():
