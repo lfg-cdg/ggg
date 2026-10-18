@@ -38,7 +38,7 @@
 | `TG_CHAT_ID`  | —               | куда слать (ваш чат, группа или канал)      |
 | `AVITO_QUERY` | `hot wheels`    | поисковый запрос                            |
 | `INTERVAL`    | `60`            | секунд между проверками (±15% случайно)     |
-| `TG_API_ID`, `TG_API_HASH` | пусто | ключи с my.telegram.org: бот подключается по MTProto, как приложение |
+| `TG_MTPROTO`  | пусто           | `1` = подключаться по MTProto, как приложение (нужны `TG_API_ID`, `TG_API_HASH`) |
 | `TG_PROXY`    | пусто           | прокси только для Telegram (если он заблокирован) |
 | `PROXY`       | пусто           | прокси только для Авито `http://user:pass@host:port` |
 | `DB_PATH`     | `avito_seen.db` | где хранить ID уже отправленных объявлений  |
@@ -55,7 +55,7 @@
 Если и это не помогло, можно подключаться по протоколу MTProto, как приложение Telegram:
 
 1. Откройте https://my.telegram.org → API development tools, создайте приложение (название любое).
-2. Впишите в `.env` значения `TG_API_ID` и `TG_API_HASH`.
+2. Впишите в `.env` значения `TG_API_ID`, `TG_API_HASH` и `TG_MTPROTO=1`.
 3. Запустите `python -m avito_hotwheels chatid` и напишите боту сообщение: в терминале появится ваш ID.
 
 В этом режиме бот создаёт файл `avito_bot.session` (сессия бота, не выкладывайте его).

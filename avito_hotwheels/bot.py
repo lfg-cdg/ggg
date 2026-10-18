@@ -28,8 +28,8 @@ HEADERS = {
 BLOCK_MARKERS = ("Доступ ограничен", "проблема с IP", "firewall-container", "captcha")
 TG_HOST, TG_IP = "api.telegram.org", "149.154.167.220"
 TG_UNREACHABLE = ("Не могу подключиться к api.telegram.org: похоже, провайдер блокирует Telegram.\n"
-                  "Впишите в .env TG_API_ID и TG_API_HASH с my.telegram.org: тогда бот будет\n"
-                  "подключаться как приложение Telegram (MTProto). Или укажите прокси, например:\n"
+                  "Можно включить MTProto, как в приложении Telegram: TG_MTPROTO=1 и ключи\n"
+                  "TG_API_ID, TG_API_HASH с my.telegram.org. Или укажите прокси, например:\n"
                   "  TG_PROXY=socks5h://127.0.0.1:1080")
 
 
@@ -280,8 +280,11 @@ class TelegramMTProto(Telegram):
 def make_telegram(chat_id: str = "") -> Telegram:
     token = os.environ.get("TG_TOKEN") or sys.exit("Сначала впишите TG_TOKEN в .env")
     proxy = os.environ.get("TG_PROXY") or None
-    api_id, api_hash = os.environ.get("TG_API_ID"), os.environ.get("TG_API_HASH")
-    if api_id and api_hash:
+    if os.environ.get("TG_MTPROTO", "").strip() in ("1", "true", "yes"):
+        api_id, api_hash = os.environ.get("TG_API_ID"), os.environ.get("TG_API_HASH")
+        if not api_id or not api_hash:
+            sys.exit("Для TG_MTPROTO=1 нужны TG_API_ID и TG_API_HASH с my.telegram.org")
+        print("Telegram: MTProto (TG_MTPROTO=1)")
         return TelegramMTProto(token, chat_id, api_id, api_hash, proxy)
     return Telegram(token, chat_id, proxy)
 

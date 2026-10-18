@@ -59,7 +59,7 @@ def test_telethon_proxy_from_url():
     assert telethon_proxy("http://u:p@host:8080")["proxy_type"] == "http"
 
 
-def test_make_telegram_uses_mtproto_when_api_keys_set(monkeypatch, tmp_path):
+def test_make_telegram_uses_mtproto_only_when_enabled(monkeypatch, tmp_path):
     from avito_hotwheels import bot
     monkeypatch.chdir(tmp_path)  # Telethon creates its session file in the current directory
     monkeypatch.setenv("TG_TOKEN", "1:x")
@@ -68,6 +68,9 @@ def test_make_telegram_uses_mtproto_when_api_keys_set(monkeypatch, tmp_path):
     assert type(bot.make_telegram("5")) is bot.Telegram
     monkeypatch.setenv("TG_API_ID", "12345")
     monkeypatch.setenv("TG_API_HASH", "a" * 32)
+    monkeypatch.delenv("TG_MTPROTO", raising=False)
+    assert type(bot.make_telegram("5")) is bot.Telegram  # keys alone don't switch to MTProto
+    monkeypatch.setenv("TG_MTPROTO", "1")
     tg = bot.make_telegram("-1001234")
     assert isinstance(tg, bot.TelegramMTProto)
     assert tg.chat_id == -1001234
