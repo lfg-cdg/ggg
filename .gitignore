@@ -2,3 +2,6 @@ cache/
 __pycache__/
 *.pyc
 .pytest_cache/
+.env
+avito_seen.db
+avito_last.html
