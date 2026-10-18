@@ -24,6 +24,10 @@ HEADERS = {
     "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
 }
 BLOCK_MARKERS = ("Доступ ограничен", "проблема с IP", "firewall-container", "captcha")
+TG_UNREACHABLE = ("Не могу подключиться к api.telegram.org: похоже, провайдер блокирует Telegram.\n"
+                  "Включите VPN или впишите в .env прокси для Telegram, например:\n"
+                  "  TG_PROXY=socks5h://127.0.0.1:1080\n"
+                  "(адрес и порт смотрите в настройках своего VPN-клиента)")
 
 
 @dataclass
@@ -130,13 +134,25 @@ class Seen:
 
 
 class Telegram:
-    def __init__(self, token: str, chat_id: str):
+    def __init__(self, token: str, chat_id: str = "", proxy: str | None = None):
         self.base = f"https://api.telegram.org/bot{token}"
         self.chat_id = chat_id
+        self.http = requests.Session()
+        if proxy:  # Telegram is often blocked in Russia while Avito must be reached directly
+            self.http.proxies = {"http": proxy, "https": proxy}
+
+    def check(self) -> None:
+        """Exit with a clear message if Telegram can't be reached or the token is wrong."""
+        try:
+            me = self._call("getMe")
+        except requests.RequestException:
+            sys.exit(TG_UNREACHABLE)
+        if not me.get("ok"):
+            sys.exit(f"Telegram не принял TG_TOKEN: {me.get('description')}")
 
     def _call(self, method: str, **params) -> dict:
         for _ in range(3):
-            resp = requests.post(f"{self.base}/{method}", data=params, timeout=30)
+            resp = self.http.post(f"{self.base}/{method}", data=params, timeout=30)
             data = resp.json()
             if resp.status_code == 429:
                 time.sleep(data.get("parameters", {}).get("retry_after", 5))
@@ -157,8 +173,9 @@ class Telegram:
         self._call("sendMessage", chat_id=self.chat_id, text=caption, parse_mode="HTML")
 
 
-def print_chat_ids(token: str) -> None:
-    updates = requests.get(f"https://api.telegram.org/bot{token}/getUpdates", timeout=30).json()
+def print_chat_ids(tg: Telegram) -> None:
+    tg.check()
+    updates = tg._call("getUpdates")
     chats = {u["message"]["chat"]["id"]: u["message"]["chat"].get("username") or u["message"]["chat"].get("title")
              for u in updates.get("result", []) if "message" in u}
     if not chats:
@@ -175,7 +192,8 @@ def run() -> None:
     interval = int(os.environ.get("INTERVAL", "60"))
     proxy = os.environ.get("PROXY") or None
     url = search_url(query)
-    tg = Telegram(token, chat_id)
+    tg = Telegram(token, chat_id, os.environ.get("TG_PROXY") or None)
+    tg.check()
     seen = Seen(os.environ.get("DB_PATH", "avito_seen.db"))
     pause, blocked = interval, False
 
@@ -218,7 +236,7 @@ def main() -> None:
     load_env()
     if sys.argv[1:] == ["chatid"]:
         token = os.environ.get("TG_TOKEN") or sys.exit("Сначала впишите TG_TOKEN в .env")
-        print_chat_ids(token)
+        print_chat_ids(Telegram(token, proxy=os.environ.get("TG_PROXY") or None))
     else:
         try:
             run()
