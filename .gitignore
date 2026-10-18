@@ -5,3 +5,4 @@ __pycache__/
 .env
 avito_seen.db
 avito_last.html
+.venv/

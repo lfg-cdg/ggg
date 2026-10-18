@@ -7,10 +7,13 @@
 ## Запуск
 
 1. **Создайте бота.** В Telegram напишите [@BotFather](https://t.me/BotFather) → `/newbot` → скопируйте токен.
-2. **Установите зависимости** (нужен Python 3.10+):
+2. **Установите зависимости** в виртуальное окружение (нужен Python 3.10+):
    ```bash
-   pip install -r avito_hotwheels/requirements.txt
+   python -m venv .venv
+   .venv/bin/pip install -r avito_hotwheels/requirements.txt
    ```
+   Дальше все команды запускайте через `.venv/bin/python` вместо `python`
+   (на Windows: `.venv\Scripts\python`).
 3. **Настройте `.env`.** Скопируйте `avito_hotwheels/.env.example` в `.env` в корне репозитория и впишите `TG_TOKEN`.
 4. **Узнайте свой chat_id.** Напишите своему боту любое сообщение и выполните:
    ```bash
