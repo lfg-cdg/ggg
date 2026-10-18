@@ -11,6 +11,7 @@ from urllib.parse import quote_plus, urljoin, urlsplit
 
 import requests
 from bs4 import BeautifulSoup
+from requests.adapters import HTTPAdapter
 
 try:
     from curl_cffi import requests as browser_http  # copies Chrome's TLS fingerprint, Avito blocks it less
@@ -25,6 +26,7 @@ HEADERS = {
     "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
 }
 BLOCK_MARKERS = ("Доступ ограничен", "проблема с IP", "firewall-container", "captcha")
+TG_HOST, TG_IP = "api.telegram.org", "149.154.167.220"
 TG_UNREACHABLE = ("Не могу подключиться к api.telegram.org: похоже, провайдер блокирует Telegram.\n"
                   "Впишите в .env TG_API_ID и TG_API_HASH с my.telegram.org: тогда бот будет\n"
                   "подключаться как приложение Telegram (MTProto). Или укажите прокси, например:\n"
@@ -139,22 +141,43 @@ def caption(it: Item) -> str:
             f"{html.escape(it.place)}\n{html.escape(it.date)}\n{it.url}")
 
 
+class NoSNIAdapter(HTTPAdapter):
+    """Russian DPI drops TLS handshakes that name api.telegram.org (SNI). Connecting to its IP sends
+    no name at all, and the certificate is still checked against api.telegram.org."""
+
+    def init_poolmanager(self, *args, **kwargs):
+        kwargs["assert_hostname"] = TG_HOST
+        super().init_poolmanager(*args, **kwargs)
+
+
 class Telegram:
     """Bot API over HTTPS (api.telegram.org)."""
 
     def __init__(self, token: str, chat_id: str = "", proxy: str | None = None):
-        self.base = f"https://api.telegram.org/bot{token}"
+        self.token = token
+        self.base = f"https://{TG_HOST}/bot{token}"
         self.chat_id = chat_id
         self.http = requests.Session()
         if proxy:  # Telegram is often blocked in Russia while Avito must be reached directly
             self.http.proxies = {"http": proxy, "https": proxy}
+
+    def use_ip(self, ip: str = TG_IP) -> None:
+        self.base = f"https://{ip}/bot{self.token}"
+        self.http.headers["Host"] = TG_HOST
+        self.http.mount(f"https://{ip}", NoSNIAdapter())
 
     def check(self) -> None:
         """Exit with a clear message if Telegram can't be reached or the token is wrong."""
         try:
             me = self._call("getMe")
         except requests.RequestException:
-            sys.exit(TG_UNREACHABLE)
+            try:
+                self.use_ip()
+                me = self._call("getMe")
+                print(f"{TG_HOST} заблокирован по имени, подключаюсь к Telegram по IP {TG_IP}")
+            except requests.RequestException as e:
+                print(f"Подключение по IP тоже не прошло: {e!r}")
+                sys.exit(TG_UNREACHABLE)
         if not me.get("ok"):
             sys.exit(f"Telegram не принял TG_TOKEN: {me.get('description')}")
 

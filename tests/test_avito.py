@@ -72,3 +72,14 @@ def test_make_telegram_uses_mtproto_when_api_keys_set(monkeypatch, tmp_path):
     assert isinstance(tg, bot.TelegramMTProto)
     assert tg.chat_id == -1001234
     tg.client.session.close()
+
+
+def test_use_ip_keeps_host_and_checks_cert_for_api_telegram_org():
+    from avito_hotwheels.bot import NoSNIAdapter, Telegram
+    tg = Telegram("123:abc", "1")
+    tg.use_ip("149.154.167.220")
+    assert tg.base == "https://149.154.167.220/bot123:abc"
+    assert tg.http.headers["Host"] == "api.telegram.org"
+    adapter = tg.http.get_adapter("https://149.154.167.220/bot123:abc/getMe")
+    assert isinstance(adapter, NoSNIAdapter)
+    assert adapter.poolmanager.connection_pool_kw["assert_hostname"] == "api.telegram.org"
