@@ -102,17 +102,40 @@ def parse(page: str) -> list[Item]:
     return items
 
 
+_session = None
+
+
+def browser(proxy: str | None):
+    """One session with cookies, like a real browser. With curl_cffi, its Chrome headers are used
+    as is: a User-Agent that doesn't match the TLS fingerprint looks like a bot."""
+    global _session
+    if _session is None:
+        if browser_http:
+            _session = browser_http.Session(impersonate="chrome")
+            _session.headers.update({"Accept-Language": HEADERS["Accept-Language"]})
+        else:
+            _session = requests.Session()
+            _session.headers.update(HEADERS)
+        if proxy:
+            _session.proxies = {"http": proxy, "https": proxy}
+        try:  # open the home page first to get cookies, as a person would
+            _session.get(AVITO + "/", timeout=30)
+        except Exception:
+            pass
+    return _session
+
+
 def fetch(url: str, proxy: str | None) -> str:
-    proxies = {"http": proxy, "https": proxy} if proxy else None
-    if browser_http:
-        resp = browser_http.get(url, headers=HEADERS, impersonate="chrome", proxies=proxies, timeout=30)
-    else:
-        resp = requests.get(url, headers=HEADERS, proxies=proxies, timeout=30)
-    if resp.status_code in (403, 429):
-        raise Blocked(f"HTTP {resp.status_code}")
+    global _session
+    resp = browser(proxy).get(url, timeout=30)
+    blocked = resp.status_code in (403, 429) or (
+        'data-marker="item"' not in resp.text and any(m in resp.text for m in BLOCK_MARKERS))
+    if blocked:
+        with open("avito_blocked.html", "w", encoding="utf-8") as f:
+            f.write(resp.text)
+        _session = None  # next try starts with fresh cookies
+        raise Blocked(f"HTTP {resp.status_code}" if resp.status_code != 200 else "captcha / IP block page")
     resp.raise_for_status()
-    if 'data-marker="item"' not in resp.text and any(m in resp.text for m in BLOCK_MARKERS):
-        raise Blocked("captcha / IP block page")
     return resp.text
 
 

@@ -86,3 +86,22 @@ def test_use_ip_keeps_host_and_checks_cert_for_api_telegram_org():
     adapter = tg.http.get_adapter("https://149.154.167.220/bot123:abc/getMe")
     assert isinstance(adapter, NoSNIAdapter)
     assert adapter.poolmanager.connection_pool_kw["assert_hostname"] == "api.telegram.org"
+
+
+def test_fetch_block_saves_page_and_resets_session(monkeypatch, tmp_path):
+    import pytest
+    from avito_hotwheels import bot
+
+    class Resp:
+        status_code, text = 403, "<h2>Доступ ограничен: проблема с IP</h2>"
+
+    class Session:
+        def get(self, url, timeout):
+            return Resp()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(bot, "_session", Session())
+    with pytest.raises(bot.Blocked, match="HTTP 403"):
+        bot.fetch("https://www.avito.ru/all?q=x", None)
+    assert bot._session is None
+    assert "проблема с IP" in (tmp_path / "avito_blocked.html").read_text(encoding="utf-8")
