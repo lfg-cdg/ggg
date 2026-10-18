@@ -203,13 +203,22 @@ class Telegram:
 
     def print_chat_ids(self) -> None:
         self.check()
-        updates = self._call("getUpdates")
-        chats = {u["message"]["chat"]["id"]: u["message"]["chat"].get("username") or u["message"]["chat"].get("title")
-                 for u in updates.get("result", []) if "message" in u}
-        if not chats:
-            print("Нет сообщений. Напишите боту что-нибудь в Telegram и запустите команду ещё раз.")
-        for chat_id, name in chats.items():
-            print(f"TG_CHAT_ID={chat_id}   ({name})")
+        print("Подключился. Напишите боту любое сообщение в Telegram, жду до 2 минут (Ctrl+C: выход)")
+        deadline = time.time() + 120
+        while time.time() < deadline:
+            updates = self._call("getUpdates", timeout=20)  # long polling: answers as soon as a message arrives
+            if not updates.get("ok"):
+                sys.exit(f"Telegram вернул ошибку: {updates.get('description')}")
+            chats = {}
+            for u in updates["result"]:
+                msg = u.get("message") or u.get("edited_message") or u.get("channel_post") or {}
+                if msg.get("chat"):
+                    chats[msg["chat"]["id"]] = msg["chat"].get("username") or msg["chat"].get("title")
+            for chat_id, name in chats.items():
+                print(f"TG_CHAT_ID={chat_id}   ({name})")
+            if chats:
+                return
+        print("Сообщение так и не пришло. Проверьте, что пишете именно этому боту, и запустите команду ещё раз.")
 
 
 def telethon_proxy(url: str | None) -> dict | None:
