@@ -1,5 +1,6 @@
 """Watch an Avito search across all of Russia and send every new listing to Telegram."""
 import html
+import io
 import os
 import random
 import sqlite3
@@ -25,9 +26,9 @@ HEADERS = {
 }
 BLOCK_MARKERS = ("Доступ ограничен", "проблема с IP", "firewall-container", "captcha")
 TG_UNREACHABLE = ("Не могу подключиться к api.telegram.org: похоже, провайдер блокирует Telegram.\n"
-                  "Включите VPN или впишите в .env прокси для Telegram, например:\n"
-                  "  TG_PROXY=socks5h://127.0.0.1:1080\n"
-                  "(адрес и порт смотрите в настройках своего VPN-клиента)")
+                  "Впишите в .env TG_API_ID и TG_API_HASH с my.telegram.org: тогда бот будет\n"
+                  "подключаться как приложение Telegram (MTProto). Или укажите прокси, например:\n"
+                  "  TG_PROXY=socks5h://127.0.0.1:1080")
 
 
 @dataclass
@@ -133,7 +134,14 @@ class Seen:
         self.db.commit()
 
 
+def caption(it: Item) -> str:
+    return (f"<b>{html.escape(it.title)}</b>\n{html.escape(it.price)}\n"
+            f"{html.escape(it.place)}\n{html.escape(it.date)}\n{it.url}")
+
+
 class Telegram:
+    """Bot API over HTTPS (api.telegram.org)."""
+
     def __init__(self, token: str, chat_id: str = "", proxy: str | None = None):
         self.base = f"https://api.telegram.org/bot{token}"
         self.chat_id = chat_id
@@ -165,34 +173,95 @@ class Telegram:
                    disable_web_page_preview="true")
 
     def item(self, it: Item) -> None:
-        caption = (f"<b>{html.escape(it.title)}</b>\n{html.escape(it.price)}\n"
-                   f"{html.escape(it.place)}\n{html.escape(it.date)}\n{it.url}")
         if it.photo and self._call("sendPhoto", chat_id=self.chat_id, photo=it.photo,
-                                   caption=caption, parse_mode="HTML").get("ok"):
+                                   caption=caption(it), parse_mode="HTML").get("ok"):
             return
-        self._call("sendMessage", chat_id=self.chat_id, text=caption, parse_mode="HTML")
+        self._call("sendMessage", chat_id=self.chat_id, text=caption(it), parse_mode="HTML")
+
+    def print_chat_ids(self) -> None:
+        self.check()
+        updates = self._call("getUpdates")
+        chats = {u["message"]["chat"]["id"]: u["message"]["chat"].get("username") or u["message"]["chat"].get("title")
+                 for u in updates.get("result", []) if "message" in u}
+        if not chats:
+            print("Нет сообщений. Напишите боту что-нибудь в Telegram и запустите команду ещё раз.")
+        for chat_id, name in chats.items():
+            print(f"TG_CHAT_ID={chat_id}   ({name})")
 
 
-def print_chat_ids(tg: Telegram) -> None:
-    tg.check()
-    updates = tg._call("getUpdates")
-    chats = {u["message"]["chat"]["id"]: u["message"]["chat"].get("username") or u["message"]["chat"].get("title")
-             for u in updates.get("result", []) if "message" in u}
-    if not chats:
-        print("Нет сообщений. Напишите боту что-нибудь в Telegram и запустите команду ещё раз.")
-    for chat_id, name in chats.items():
-        print(f"TG_CHAT_ID={chat_id}   ({name})")
+def telethon_proxy(url: str | None) -> dict | None:
+    if not url:
+        return None
+    u = urlsplit(url)
+    return {"proxy_type": u.scheme.rstrip("h"), "addr": u.hostname, "port": u.port,
+            "username": u.username, "password": u.password, "rdns": True}
+
+
+class TelegramMTProto(Telegram):
+    """Same interface, but MTProto like the Telegram app: works where api.telegram.org is blocked."""
+
+    def __init__(self, token: str, chat_id: str, api_id: str, api_hash: str, proxy: str | None = None):
+        from telethon.network import ConnectionTcpObfuscated
+        from telethon.sync import TelegramClient
+        self.token = token
+        self.chat_id = int(chat_id) if chat_id else None
+        # obfuscated transport, like Telegram Desktop: harder for DPI to recognise
+        self.client = TelegramClient("avito_bot", int(api_id), api_hash, proxy=telethon_proxy(proxy),
+                                     connection=ConnectionTcpObfuscated)
+
+    def check(self) -> None:
+        try:
+            self.client.start(bot_token=self.token)
+        except Exception as e:
+            sys.exit(f"Не могу войти в Telegram по MTProto: {e}\n"
+                     f"Проверьте TG_TOKEN, TG_API_ID и TG_API_HASH в .env и что VPN включён.")
+
+    def text(self, message: str) -> None:
+        self.client.send_message(self.chat_id, message, parse_mode="html", link_preview=False)
+
+    def item(self, it: Item) -> None:
+        if it.photo:
+            try:
+                resp = requests.get(it.photo, headers=HEADERS, timeout=20)
+                resp.raise_for_status()
+                photo = io.BytesIO(resp.content)
+                photo.name = "photo.jpg"
+                self.client.send_file(self.chat_id, photo, caption=caption(it), parse_mode="html")
+                return
+            except Exception as e:
+                print(f"не удалось отправить фото ({e!r}), шлю текстом")
+        self.client.send_message(self.chat_id, caption(it), parse_mode="html")
+
+    def print_chat_ids(self) -> None:
+        from telethon import events
+        self.check()
+        print("Подключился. Напишите боту любое сообщение в Telegram, здесь появится ваш ID (Ctrl+C: выход)")
+
+        @self.client.on(events.NewMessage)
+        async def show(event):
+            print(f"TG_CHAT_ID={event.chat_id}")
+            await self.client.disconnect()
+
+        self.client.run_until_disconnected()
+
+
+def make_telegram(chat_id: str = "") -> Telegram:
+    token = os.environ.get("TG_TOKEN") or sys.exit("Сначала впишите TG_TOKEN в .env")
+    proxy = os.environ.get("TG_PROXY") or None
+    api_id, api_hash = os.environ.get("TG_API_ID"), os.environ.get("TG_API_HASH")
+    if api_id and api_hash:
+        return TelegramMTProto(token, chat_id, api_id, api_hash, proxy)
+    return Telegram(token, chat_id, proxy)
 
 
 def run() -> None:
-    token, chat_id = os.environ.get("TG_TOKEN"), os.environ.get("TG_CHAT_ID")
-    if not token or not chat_id:
-        sys.exit("Заполните TG_TOKEN и TG_CHAT_ID в файле .env (см. avito_hotwheels/README.md)")
+    chat_id = os.environ.get("TG_CHAT_ID") or sys.exit(
+        "Заполните TG_CHAT_ID в файле .env (см. avito_hotwheels/README.md)")
     query = os.environ.get("AVITO_QUERY", "hot wheels")
     interval = int(os.environ.get("INTERVAL", "60"))
     proxy = os.environ.get("PROXY") or None
     url = search_url(query)
-    tg = Telegram(token, chat_id, os.environ.get("TG_PROXY") or None)
+    tg = make_telegram(chat_id)
     tg.check()
     seen = Seen(os.environ.get("DB_PATH", "avito_seen.db"))
     pause, blocked = interval, False
@@ -235,8 +304,10 @@ def run() -> None:
 def main() -> None:
     load_env()
     if sys.argv[1:] == ["chatid"]:
-        token = os.environ.get("TG_TOKEN") or sys.exit("Сначала впишите TG_TOKEN в .env")
-        print_chat_ids(Telegram(token, proxy=os.environ.get("TG_PROXY") or None))
+        try:
+            make_telegram().print_chat_ids()
+        except KeyboardInterrupt:
+            pass
     else:
         try:
             run()

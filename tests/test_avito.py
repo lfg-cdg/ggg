@@ -48,3 +48,27 @@ def test_seen_returns_only_unknown_ids(tmp_path):
     seen.add([old])
     assert not seen.empty()
     assert seen.new([new, old]) == [new]
+
+
+def test_telethon_proxy_from_url():
+    from avito_hotwheels.bot import telethon_proxy
+    assert telethon_proxy(None) is None
+    assert telethon_proxy("socks5h://127.0.0.1:2080") == {
+        "proxy_type": "socks5", "addr": "127.0.0.1", "port": 2080,
+        "username": None, "password": None, "rdns": True}
+    assert telethon_proxy("http://u:p@host:8080")["proxy_type"] == "http"
+
+
+def test_make_telegram_uses_mtproto_when_api_keys_set(monkeypatch, tmp_path):
+    from avito_hotwheels import bot
+    monkeypatch.chdir(tmp_path)  # Telethon creates its session file in the current directory
+    monkeypatch.setenv("TG_TOKEN", "1:x")
+    monkeypatch.delenv("TG_API_ID", raising=False)
+    monkeypatch.delenv("TG_API_HASH", raising=False)
+    assert type(bot.make_telegram("5")) is bot.Telegram
+    monkeypatch.setenv("TG_API_ID", "12345")
+    monkeypatch.setenv("TG_API_HASH", "a" * 32)
+    tg = bot.make_telegram("-1001234")
+    assert isinstance(tg, bot.TelegramMTProto)
+    assert tg.chat_id == -1001234
+    tg.client.session.close()
